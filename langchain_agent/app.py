@@ -2,9 +2,9 @@ import argparse
 from typing import Dict
 
 from dotenv import load_dotenv
-from langchain.agents import AgentExecutor, create_openai_tools_agent
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.agents import create_agent
 from langchain.tools import tool
+from langchain_core.messages import AIMessage, BaseMessage
 from langchain_openai import ChatOpenAI
 
 load_dotenv()
@@ -53,23 +53,22 @@ def calculate_refund(amount: float, percent: float) -> str:
     return f"${refund:.2f}"
 
 
-def build_agent() -> AgentExecutor:
+def _last_ai_message(messages: list[BaseMessage]) -> BaseMessage:
+    for message in reversed(messages):
+        if isinstance(message, AIMessage):
+            return message
+    return messages[-1]
+
+
+def build_agent():
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     tools = [lookup_policy, calculate_refund]
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                "You are a support agent. Use tools when they help. "
-                "Return a JSON object with keys: category, needs_human, reply. "
-                "Keep reply under 120 words.",
-            ),
-            ("human", "{input}"),
-            MessagesPlaceholder("agent_scratchpad"),
-        ]
+    system_prompt = (
+        "You are a support agent. Use tools when they help. "
+        "Return a JSON object with keys: category, needs_human, reply. "
+        "Keep reply under 120 words."
     )
-    agent = create_openai_tools_agent(llm, tools, prompt)
-    return AgentExecutor(agent=agent, tools=tools, verbose=True)
+    return create_agent(llm, tools=tools, system_prompt=system_prompt)
 
 
 def main() -> None:
@@ -86,8 +85,9 @@ def main() -> None:
     args = parser.parse_args()
 
     agent = build_agent()
-    result = agent.invoke({"input": args.message})
-    print(result["output"])
+    result = agent.invoke({"messages": [{"role": "user", "content": args.message}]})
+    final_message = _last_ai_message(result["messages"])
+    print(final_message.content)
 
 
 if __name__ == "__main__":
